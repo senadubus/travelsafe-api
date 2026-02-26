@@ -1,0 +1,76 @@
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+*__init__.py
+
+# Virtual environments
+venv/
+.env/
+.venv/
+ENV/
+env/
+travelsafe-backend/
+
+# Conda
+conda-meta/
+*.conda
+*.tar.bz2
+
+# Environment variables
+.env
+.env.*
+
+# =========================
+# IDE / Editor
+# =========================
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# =========================
+# OS
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# Logs
+# =========================
+*.log
+logs/
+
+# =========================
+# SQLite (just in case)
+# =========================
+*.db
+
+# =========================
+# Pytest / Coverage
+# =========================
+.pytest_cache/
+.coverage
+htmlcov/
+
+# =========================
+# Migrations (if using alembic later)
+# =========================
+alembic/versions/*.pyc
+
+# =========================
+# Uvicorn reload files
+# =========================
+*.reload
+
+# =========================
+# Misc
+# =========================
+# Misc
+# =========================
+*.bak
+*.tmp
+.env
+.env.*
