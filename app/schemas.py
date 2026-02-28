@@ -4,3 +4,8 @@ class CrimePoint(BaseModel):
     crime: str | None
     lat: float
     lng: float
+
+class HeatClusterOut(BaseModel):
+    lat: float
+    lng: float
+    count: int
