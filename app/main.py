@@ -3,6 +3,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .database import Base, engine
 from .routers.crime import router as crime_router
+from .routers.tiles import router as tiles_router
+from .routers.points import router as points_router
+
 
 app = FastAPI(title="TravelSafe API")
 
@@ -17,6 +20,9 @@ app.add_middleware(
 #Base.metadata.create_all(bind=engine)
 
 app.include_router(crime_router)
+app.include_router(tiles_router)
+app.include_router(points_router)
+
 
 @app.get("/")
 def root():
