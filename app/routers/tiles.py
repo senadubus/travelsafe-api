@@ -15,9 +15,11 @@ def grid_meters_for_zoom(z: int) -> float:
     if z <= 11:
         return 1200.0
     if z <= 13:
-        return 700.0
+        return 600.0
     if z <= 15:
-        return 350.0
+        return 250.0
+    if z <= 17:
+        return 120.0
     return 200.0
 
 def empty_png(size=256):
@@ -97,8 +99,13 @@ def heat_tile(
     minx, miny, maxx, maxy = bounds["minx"], bounds["miny"], bounds["maxx"], bounds["maxy"]
     tile_w = maxx - minx
     tile_h = maxy - miny
+    
+    size = 256
+    pad = 32
+    canvas_size = size + 2 * pad
 
-    img = Image.new("RGBA", (256, 256), (0, 0, 0, 0))
+
+    img = Image.new("RGBA", (canvas_size, canvas_size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img, "RGBA")
 
     for row in rows:
@@ -107,23 +114,25 @@ def heat_tile(
         cnt = int(row["cnt"])
 
         intensity = math.log1p(cnt) / max_log
+        if intensity < 0.05:
+            continue 
+
         # grid hücresini tile pikseline çevir
-        x1 = int(((gx - minx) / tile_w) * 256)
-        x2 = int((((gx + cell_m) - minx) / tile_w) * 256)
+        x1 = int(((gx - minx) / tile_w) * size) + pad
+        x2 = int((((gx + cell_m) - minx) / tile_w) * size) + pad
 
         # y ekseni ters
-        y1 = int((1 - ((gy + cell_m - miny) / tile_h)) * 256)
-        y2 = int((1 - ((gy - miny) / tile_h)) * 256)
+        y1 = int((1 - ((gy + cell_m - miny) / tile_h)) * size) + pad
+        y2 = int((1 - ((gy - miny) / tile_h)) * size) + pad
 
-        x1 = max(0, min(255, x1))
-        x2 = max(0, min(256, x2))
-        y1 = max(0, min(255, y1))
-        y2 = max(0, min(256, y2))
+        x1 = max(0, min(canvas_size - 1, x1))
+        x2 = max(0, min(canvas_size, x2))
+        y1 = max(0, min(canvas_size - 1, y1))
+        y2 = max(0, min(canvas_size, y2))
 
         if x2 > x1 and y2 > y1:
-            if intensity < 0.05:
-                continue     # mavi
-            elif intensity < 0.2:
+               
+            if intensity < 0.2:
                 color = (0, 0, 255, 60)       # mavi
             elif intensity < 0.4:
                 color = (0, 255, 255, 90)     # cyan
@@ -132,10 +141,18 @@ def heat_tile(
             elif intensity < 0.8:
                 color = (255, 165, 0, 160)    # turuncu
             else:
-                color = (255, 0, 0, 210) 
-            draw.ellipse([x1, y1, x2, y2], fill=color) 
-
+                color = (255, 0, 0, 210)
+            cx = int(((gx + cell_m / 2 - minx) / tile_w) * size) + pad
+            cy = int((1 - ((gy + cell_m / 2 - miny) / tile_h)) * size) + pad
+            radius = int(10 + 22 * intensity)
+            draw.ellipse(
+                [cx - radius, cy - radius, cx + radius, cy + radius],
+                fill=color,
+            )
+    blur = 10 if z <= 12 else 8 if z <= 14 else 6
     buf = io.BytesIO()
-    img.filter(ImageFilter.GaussianBlur(radius=10)).save(buf, format="PNG")
+    img = img.filter(ImageFilter.GaussianBlur(radius=blur))
+    img = img.crop((pad, pad, pad + size, pad + size))
+    img.save(buf, format="PNG")
     print(f"z={z} x={x} y={y} rows={len(rows)}")
     return Response(content=buf.getvalue(), media_type="image/png")
