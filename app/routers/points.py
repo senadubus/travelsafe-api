@@ -23,7 +23,7 @@ def get_crime_points(
       SELECT ST_MakeEnvelope(:min_lng, :min_lat, :max_lng, :max_lat, 4326) AS bbox
     )
     SELECT
-      id,
+      "ID" AS id,
       "Primary Type" AS crime_type,
       "Description" AS description,
       "Date" AS crime_date,
