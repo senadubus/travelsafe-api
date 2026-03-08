@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter
 import io
 import math
 
@@ -107,9 +107,6 @@ def heat_tile(
         cnt = int(row["cnt"])
 
         intensity = math.log1p(cnt) / max_log
-
-        alpha = int(40 + intensity * 180)
-
         # grid hücresini tile pikseline çevir
         x1 = int(((gx - minx) / tile_w) * 256)
         x2 = int((((gx + cell_m) - minx) / tile_w) * 256)
@@ -124,9 +121,21 @@ def heat_tile(
         y2 = max(0, min(256, y2))
 
         if x2 > x1 and y2 > y1:
-            draw.rectangle([x1, y1, x2, y2], fill=(255, 0, 0, alpha))
+            if intensity < 0.05:
+                continue     # mavi
+            elif intensity < 0.2:
+                color = (0, 0, 255, 60)       # mavi
+            elif intensity < 0.4:
+                color = (0, 255, 255, 90)     # cyan
+            elif intensity < 0.6:
+                color = (255, 255, 0, 120)    # sarı
+            elif intensity < 0.8:
+                color = (255, 165, 0, 160)    # turuncu
+            else:
+                color = (255, 0, 0, 210) 
+            draw.ellipse([x1, y1, x2, y2], fill=color) 
 
     buf = io.BytesIO()
-    img.save(buf, format="PNG")
+    img.filter(ImageFilter.GaussianBlur(radius=10)).save(buf, format="PNG")
     print(f"z={z} x={x} y={y} rows={len(rows)}")
     return Response(content=buf.getvalue(), media_type="image/png")
