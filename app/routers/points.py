@@ -23,6 +23,7 @@ def get_crime_points(
       SELECT ST_MakeEnvelope(:min_lng, :min_lat, :max_lng, :max_lat, 4326) AS bbox
     )
     SELECT
+      "ID" AS id,
       "Primary Type" AS crime_type,
       "Description" AS description,
       "Date" AS crime_date,
@@ -53,14 +54,5 @@ def get_crime_points(
 
     return {
         "count": len(rows),
-        "points": [
-            {
-                "crime_type": r["crime_type"],
-                "description": r["description"],
-                "crime_date": r["crime_date"].isoformat() if r["crime_date"] else None,
-                "lat": float(r["lat"]),
-                "lng": float(r["lng"]),
-            }
-            for r in rows
-        ],
+        "points": [dict(r) for r in rows],
     }

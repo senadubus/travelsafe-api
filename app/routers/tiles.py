@@ -1,5 +1,3 @@
-from turtle import color
-
 from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -17,27 +15,12 @@ def grid_meters_for_zoom(z: int) -> float:
     if z <= 11:
         return 1200.0
     if z <= 13:
-        return 500.0
-    if z < 15:
-        return 200.0
-    return None
-
-def zoom_blur(z: int) -> int:
-    if z <= 9:
-         return 5
-    if z == 10:
-        return 7
-    if z == 11:
-        return 9
-    if z == 12:
-        return 11
-    if z == 13:
-        return 13        
+        return 600.0
     if z <= 15:
-        return 15
-
-    return None     
-
+        return 250.0
+    if z <= 17:
+        return 120.0
+    return 200.0
 
 def empty_png(size=256):
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
@@ -55,8 +38,6 @@ def heat_tile(
     db: Session = Depends(get_db),
 ):
     cell_m = grid_meters_for_zoom(z)
-    if cell_m is None:
-        return empty_png()
 
     sql = text("""
     WITH tile AS (
@@ -152,10 +133,8 @@ def heat_tile(
         if x2 > x1 and y2 > y1:
                
             if intensity < 0.2:
-                continue
                 color = (0, 0, 255, 60)       # mavi
             elif intensity < 0.4:
-                continue
                 color = (0, 255, 255, 90)     # cyan
             elif intensity < 0.6:
                 color = (255, 255, 0, 120)    # sarı
@@ -163,28 +142,17 @@ def heat_tile(
                 color = (255, 165, 0, 160)    # turuncu
             else:
                 color = (255, 0, 0, 210)
-
             cx = int(((gx + cell_m / 2 - minx) / tile_w) * size) + pad
             cy = int((1 - ((gy + cell_m / 2 - miny) / tile_h)) * size) + pad
-
-            r = 6  # küçük çekirdek
-            draw.ellipse((cx-r, cy-r, cx+r, cy+r), fill=color)
-
-
-    print(f"🔍🔍🔍 MAP ZOOM LEVEL >>>>>>>> {z} 🔍🔍🔍")
-    print(f"🔍🔍🔍 MAP ZOOM LEVEL >>>>>>>> {z} 🔍🔍🔍")
-    print(f"🔍🔍🔍 MAP ZOOM LEVEL >>>>>>>> {z} 🔍🔍🔍")
-    print(f"🔍🔍🔍 MAP ZOOM LEVEL >>>>>>>> {z} 🔍🔍🔍")
-    print(f"🔍🔍🔍 MAP ZOOM LEVEL >>>>>>>> {z} 🔍🔍🔍")
-    print(f"🔍🔍🔍 MAP ZOOM LEVEL >>>>>>>> {z} 🔍🔍🔍")
+            radius = int(10 + 22 * intensity)
+            draw.ellipse(
+                [cx - radius, cy - radius, cx + radius, cy + radius],
+                fill=color,
+            )
+    blur = 10 if z <= 12 else 8 if z <= 14 else 6
     buf = io.BytesIO()
-    radius = zoom_blur(z)
-    if radius is not None:
-        img = img.filter(ImageFilter.GaussianBlur(radius=radius))
+    img = img.filter(ImageFilter.GaussianBlur(radius=blur))
     img = img.crop((pad, pad, pad + size, pad + size))
     img.save(buf, format="PNG")
     print(f"z={z} x={x} y={y} rows={len(rows)}")
     return Response(content=buf.getvalue(), media_type="image/png")
-
-
-#zoom level 15'ten sonra markerları göster
