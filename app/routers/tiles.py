@@ -15,12 +15,22 @@ def grid_meters_for_zoom(z: int) -> float:
     if z <= 11:
         return 1200.0
     if z <= 13:
-        return 600.0
-    if z <= 15:
-        return 250.0
-    if z <= 17:
-        return 120.0
-    return 200.0
+        return 500.0
+    if z < 15:
+        return 200.0
+    return None
+
+def zoom_blur(z: int) -> int | None:
+    if z <= 9:
+        return 6
+    if z <= 11:
+        return 7
+    if z <= 13:
+        return 8
+    if z < 15:
+        return 7
+    return None 
+
 
 def empty_png(size=256):
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
@@ -38,6 +48,8 @@ def heat_tile(
     db: Session = Depends(get_db),
 ):
     cell_m = grid_meters_for_zoom(z)
+    if cell_m is None:
+        return empty_png()
 
     sql = text("""
     WITH tile AS (
@@ -115,44 +127,41 @@ def heat_tile(
 
         intensity = math.log1p(cnt) / max_log
         if intensity < 0.05:
-            continue 
+            continue
 
-        # grid hücresini tile pikseline çevir
-        x1 = int(((gx - minx) / tile_w) * size) + pad
-        x2 = int((((gx + cell_m) - minx) / tile_w) * size) + pad
+        if intensity < 0.2:
+            color = (0, 0, 255, 60)
+        elif intensity < 0.4:
+            color = (0, 255, 255, 90)
+        elif intensity < 0.6:
+            color = (255, 255, 0, 120)
+        elif intensity < 0.8:
+            color = (255, 165, 0, 160)
+        else:
+            color = (255, 0, 0, 210)
 
-        # y ekseni ters
-        y1 = int((1 - ((gy + cell_m - miny) / tile_h)) * size) + pad
-        y2 = int((1 - ((gy - miny) / tile_h)) * size) + pad
+        cx = int(((gx + cell_m / 2 - minx) / tile_w) * size) + pad
+        cy = int((1 - ((gy + cell_m / 2 - miny) / tile_h)) * size) + pad
 
-        x1 = max(0, min(canvas_size - 1, x1))
-        x2 = max(0, min(canvas_size, x2))
-        y1 = max(0, min(canvas_size - 1, y1))
-        y2 = max(0, min(canvas_size, y2))
+        pixel_cell = max(1.0, (cell_m / tile_w) * size)
+        r = max(4, int(pixel_cell * 0.35))
 
-        if x2 > x1 and y2 > y1:
-               
-            if intensity < 0.2:
-                color = (0, 0, 255, 60)       # mavi
-            elif intensity < 0.4:
-                color = (0, 255, 255, 90)     # cyan
-            elif intensity < 0.6:
-                color = (255, 255, 0, 120)    # sarı
-            elif intensity < 0.8:
-                color = (255, 165, 0, 160)    # turuncu
-            else:
-                color = (255, 0, 0, 210)
-            cx = int(((gx + cell_m / 2 - minx) / tile_w) * size) + pad
-            cy = int((1 - ((gy + cell_m / 2 - miny) / tile_h)) * size) + pad
-            radius = int(10 + 22 * intensity)
-            draw.ellipse(
-                [cx - radius, cy - radius, cx + radius, cy + radius],
-                fill=color,
-            )
-    blur = 10 if z <= 12 else 8 if z <= 14 else 6
+        draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=color)
+
+    print(f"🔍🔍🔍 MAP ZOOM LEVEL >>>>>>>> {z} 🔍🔍🔍")
+    print(f"🔍🔍🔍 MAP ZOOM LEVEL >>>>>>>> {z} 🔍🔍🔍")
+    print(f"🔍🔍🔍 MAP ZOOM LEVEL >>>>>>>> {z} 🔍🔍🔍")
+    print(f"🔍🔍🔍 MAP ZOOM LEVEL >>>>>>>> {z} 🔍🔍🔍")
+    print(f"🔍🔍🔍 MAP ZOOM LEVEL >>>>>>>> {z} 🔍🔍🔍")
+    print(f"🔍🔍🔍 MAP ZOOM LEVEL >>>>>>>> {z} 🔍🔍🔍")
     buf = io.BytesIO()
-    img = img.filter(ImageFilter.GaussianBlur(radius=blur))
+    radius = zoom_blur(z)
+    if radius is not None:
+        img = img.filter(ImageFilter.GaussianBlur(radius=radius))
     img = img.crop((pad, pad, pad + size, pad + size))
     img.save(buf, format="PNG")
     print(f"z={z} x={x} y={y} rows={len(rows)}")
     return Response(content=buf.getvalue(), media_type="image/png")
+
+
+#zoom level 15'ten sonra markerları göster
