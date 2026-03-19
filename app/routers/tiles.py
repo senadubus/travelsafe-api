@@ -55,19 +55,13 @@ def zoom_radius_multiplier(z: int) -> float:
 
 
 def zoom_alpha_multiplier(z: int) -> float:
-    if z <= 9:
-        return 1.5
-    if z == 10:
-        return 1.5
-    if z == 11:
-        return 1.6
-    if z == 12:
-        return 1.3
-    if z == 13:
-        return 1.4
-    if z == 14:
-        return 1.4
-    return 1.3
+    if z <= 9:  return 1.2
+    if z == 10: return 1.2
+    if z == 11: return 1.3
+    if z == 12: return 1.1
+    if z == 13: return 1.1
+    if z == 14: return 1.2
+    return 1.1
 
 
 def empty_png(size=256):
@@ -168,15 +162,15 @@ def heat_tile(
 
         # z 9-10 görünümünü koruyup 11-14'ü biraz parlatıyoruz
         if intensity < 0.20:
-            base_color = (90, 140, 255, 45)     # yumuşak mavi
+            base_color = (90, 140, 255, 30)     # soft blue
         elif intensity < 0.40:
-            base_color = (80, 210, 255, 65)     # sakin cyan
+            base_color = (0, 220, 255, 50)      # cyan
         elif intensity < 0.60:
-            base_color = (255, 220, 110, 90)    # yumuşak sarı
+            base_color = (0, 255, 120, 75)      # green
         elif intensity < 0.80:
-            base_color = (255, 170, 80, 120)    # pastel turuncu
+            base_color = (255, 220, 0, 100)     # yellow
         else:
-            base_color = (255, 95, 95, 150)     # yumuşak kırmızı
+            base_color = (255, 60, 0, 130)      # red   # yumuşak kırmızı
 
         r0, g0, b0, a0 = base_color
         a = min(255, int(a0 * zoom_alpha_multiplier(z)))
@@ -210,4 +204,3 @@ def heat_tile(
     print(f"heat tile => z={z} x={x} y={y} rows={len(rows)}")
     return Response(content=buf.getvalue(), media_type="image/png")
 #zoom level 15'ten sonra markerları göster
-
