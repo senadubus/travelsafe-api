@@ -9,6 +9,7 @@ from ..database import get_db
 
 router = APIRouter(prefix="/tiles", tags=["tiles"])
 
+
 def grid_meters_for_zoom(z: int) -> float:
     if z <= 9:
         return 2000.0
@@ -20,16 +21,53 @@ def grid_meters_for_zoom(z: int) -> float:
         return 200.0
     return None
 
+
 def zoom_blur(z: int) -> int | None:
     if z <= 9:
         return 6
-    if z <= 11:
-        return 7
-    if z <= 13:
-        return 8
-    if z < 15:
-        return 7
-    return None 
+    if z == 10:
+        return 6
+    if z == 11:
+        return 6   # artırdık
+    if z == 12:
+        return 5
+    if z == 13:
+        return 4
+    if z == 14:
+        return 3
+    return None
+
+
+def zoom_radius_multiplier(z: int) -> float:
+    if z <= 9:
+        return 0.35
+    if z == 10:
+        return 0.35
+    if z == 11:
+        return 0.48
+    if z == 12:
+        return 0.58
+    if z == 13:
+        return 0.68
+    if z == 14:
+        return 0.78
+    return 0.35
+
+
+def zoom_alpha_multiplier(z: int) -> float:
+    if z <= 9:
+        return 1.5
+    if z == 10:
+        return 1.5
+    if z == 11:
+        return 1.6
+    if z == 12:
+        return 1.3
+    if z == 13:
+        return 1.4
+    if z == 14:
+        return 1.4
+    return 1.3
 
 
 def empty_png(size=256):
@@ -37,6 +75,7 @@ def empty_png(size=256):
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return Response(content=buf.getvalue(), media_type="image/png")
+
 
 @router.get("/heat/{z}/{x}/{y}.png")
 def heat_tile(
@@ -73,7 +112,7 @@ def heat_tile(
     )
     SELECT gx, gy, cnt
     FROM gridded
-""")
+    """)
 
     rows = db.execute(sql, {
         "z": z,
@@ -84,13 +123,10 @@ def heat_tile(
         "cell_m": cell_m,
     }).mappings().all()
 
-    # hiç veri yoksa boş tile dön
     if not rows:
         return empty_png()
 
     counts = [int(row["cnt"]) for row in rows if row["cnt"] is not None]
-
-    # güvenlik amaçlı ikinci kontrol
     if not counts:
         return empty_png()
 
@@ -98,7 +134,6 @@ def heat_tile(
     if max_log == 0:
         return empty_png()
 
-    # tile sınırları
     sql_bounds = text("""
         SELECT
             ST_XMin(ST_TileEnvelope(:z, :x, :y)) AS minx,
@@ -111,14 +146,16 @@ def heat_tile(
     minx, miny, maxx, maxy = bounds["minx"], bounds["miny"], bounds["maxx"], bounds["maxy"]
     tile_w = maxx - minx
     tile_h = maxy - miny
-    
+
     size = 256
     pad = 32
     canvas_size = size + 2 * pad
 
-
     img = Image.new("RGBA", (canvas_size, canvas_size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img, "RGBA")
+
+    alpha_mul = zoom_alpha_multiplier(z)
+    radius_mul = zoom_radius_multiplier(z)
 
     for row in rows:
         gx = float(row["gx"])
@@ -129,39 +166,48 @@ def heat_tile(
         if intensity < 0.05:
             continue
 
-        if intensity < 0.2:
-            color = (0, 0, 255, 60)
-        elif intensity < 0.4:
-            color = (0, 255, 255, 90)
-        elif intensity < 0.6:
-            color = (255, 255, 0, 120)
-        elif intensity < 0.8:
-            color = (255, 165, 0, 160)
+        # z 9-10 görünümünü koruyup 11-14'ü biraz parlatıyoruz
+        if intensity < 0.20:
+            base_color = (90, 140, 255, 45)     # yumuşak mavi
+        elif intensity < 0.40:
+            base_color = (80, 210, 255, 65)     # sakin cyan
+        elif intensity < 0.60:
+            base_color = (255, 220, 110, 90)    # yumuşak sarı
+        elif intensity < 0.80:
+            base_color = (255, 170, 80, 120)    # pastel turuncu
         else:
-            color = (255, 0, 0, 210)
+            base_color = (255, 95, 95, 150)     # yumuşak kırmızı
+
+        r0, g0, b0, a0 = base_color
+        a = min(255, int(a0 * zoom_alpha_multiplier(z)))
+        color = (r0, g0, b0, a)
 
         cx = int(((gx + cell_m / 2 - minx) / tile_w) * size) + pad
         cy = int((1 - ((gy + cell_m / 2 - miny) / tile_h)) * size) + pad
 
         pixel_cell = max(1.0, (cell_m / tile_w) * size)
-        r = max(4, int(pixel_cell * 0.35))
+
+        # 11-14 için daha büyük radius
+        r = max(4, int(pixel_cell * radius_mul))
 
         draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=color)
+        
+    print(f"🔍🔍🔍 MAP ZOOM LEVEL >>>>>>>> {z} 🔍🔍🔍")
+    print(f"🔍🔍🔍 MAP ZOOM LEVEL >>>>>>>> {z} 🔍🔍🔍")
+    print(f"🔍🔍🔍 MAP ZOOM LEVEL >>>>>>>> {z} 🔍🔍🔍")
+    print(f"🔍🔍🔍 MAP ZOOM LEVEL >>>>>>>> {z} 🔍🔍🔍")
+    print(f"🔍🔍🔍 MAP ZOOM LEVEL >>>>>>>> {z} 🔍🔍🔍")
+    print(f"🔍🔍🔍 MAP ZOOM LEVEL >>>>>>>> {z} 🔍🔍🔍")
 
-    print(f"🔍🔍🔍 MAP ZOOM LEVEL >>>>>>>> {z} 🔍🔍🔍")
-    print(f"🔍🔍🔍 MAP ZOOM LEVEL >>>>>>>> {z} 🔍🔍🔍")
-    print(f"🔍🔍🔍 MAP ZOOM LEVEL >>>>>>>> {z} 🔍🔍🔍")
-    print(f"🔍🔍🔍 MAP ZOOM LEVEL >>>>>>>> {z} 🔍🔍🔍")
-    print(f"🔍🔍🔍 MAP ZOOM LEVEL >>>>>>>> {z} 🔍🔍🔍")
-    print(f"🔍🔍🔍 MAP ZOOM LEVEL >>>>>>>> {z} 🔍🔍🔍")
     buf = io.BytesIO()
     radius = zoom_blur(z)
     if radius is not None:
         img = img.filter(ImageFilter.GaussianBlur(radius=radius))
+
     img = img.crop((pad, pad, pad + size, pad + size))
     img.save(buf, format="PNG")
-    print(f"z={z} x={x} y={y} rows={len(rows)}")
+
+    print(f"heat tile => z={z} x={x} y={y} rows={len(rows)}")
     return Response(content=buf.getvalue(), media_type="image/png")
-
-
 #zoom level 15'ten sonra markerları göster
+
