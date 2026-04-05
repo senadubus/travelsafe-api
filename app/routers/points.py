@@ -23,7 +23,6 @@ def get_crime_points(
       SELECT ST_MakeEnvelope(:min_lng, :min_lat, :max_lng, :max_lat, 4326) AS bbox
     )
     SELECT
-      "ID" AS id,
       "Primary Type" AS crime_type,
       "Description" AS description,
       "Date" AS crime_date,
@@ -34,7 +33,7 @@ def get_crime_points(
       AND "Date" >= (NOW() - (:days || ' days')::interval)
       AND geom::geometry && bounds.bbox
       AND ST_Intersects(geom::geometry, bounds.bbox)
-      AND (:crime_type IS NULL OR "Primary Type" = :crime_type)
+      AND (:crime_type IS NULL OR UPPER("Primary Type") = UPPER(:crime_type))
     ORDER BY "Date" DESC
     LIMIT :limit
     """)
