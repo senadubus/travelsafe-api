@@ -85,28 +85,31 @@ def heat_tile(
         return empty_png()
 
     sql = text("""
-    WITH tile AS (
-        SELECT ST_TileEnvelope(:z, :x, :y) AS geom_3857
-    ),
-    crimes_in_tile AS (
-        SELECT
-            ST_Transform(c.geom::geometry, 3857) AS geom_3857
-        FROM crime c, tile t
-        WHERE c."Date" >= NOW() - (:days || ' days')::interval
-          AND ST_Intersects(ST_Transform(c.geom::geometry, 3857), t.geom_3857)
-          AND (:crime_type IS NULL OR c."Primary Type" = :crime_type)
-    ),
-    gridded AS (
-        SELECT
-            FLOOR(ST_X(geom_3857) / :cell_m) * :cell_m AS gx,
-            FLOOR(ST_Y(geom_3857) / :cell_m) * :cell_m AS gy,
-            COUNT(*) AS cnt
-        FROM crimes_in_tile
-        GROUP BY 1, 2
-    )
-    SELECT gx, gy, cnt
-    FROM gridded
-    """)
+        WITH tile AS (
+            SELECT ST_TileEnvelope(:z, :x, :y) AS geom_3857
+        ),
+        crimes_in_tile AS (
+            SELECT
+                ST_Transform(c.geom::geometry, 3857) AS geom_3857
+            FROM crime c, tile t
+            WHERE c."Date" >= NOW() - (:days || ' days')::interval
+            AND ST_Intersects(ST_Transform(c.geom::geometry, 3857), t.geom_3857)
+            AND (
+                :crime_type IS NULL
+                OR UPPER(c."Primary Type") = UPPER(:crime_type)
+            )
+        ),
+        gridded AS (
+            SELECT
+                FLOOR(ST_X(geom_3857) / :cell_m) * :cell_m AS gx,
+                FLOOR(ST_Y(geom_3857) / :cell_m) * :cell_m AS gy,
+                COUNT(*) AS cnt
+            FROM crimes_in_tile
+            GROUP BY 1, 2
+        )
+        SELECT gx, gy, cnt
+        FROM gridded
+        """)
 
     rows = db.execute(sql, {
         "z": z,
