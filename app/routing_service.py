@@ -1,8 +1,8 @@
 import json
-from dataclasses import dataclass
-from typing import Dict, List, Tuple, Optional
-from collections import defaultdict
 import heapq
+from dataclasses import dataclass
+from collections import defaultdict
+from typing import Dict, List, Tuple, Optional
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -11,8 +11,8 @@ from sqlalchemy.orm import Session
 @dataclass
 class Edge:
     segment_id: int
-    source: int
-    target: int
+    source: int   # road_nodes.osmid
+    target: int   # road_nodes.osmid
     length_m: float
     risk_score: float
 
@@ -25,6 +25,10 @@ class RouteResult:
     total_risk: float
     total_cost: float
 
+
+# -------------------------------------------------------------------
+# DB HELPERS
+# -------------------------------------------------------------------
 
 def get_nearest_node(db: Session, lat: float, lng: float) -> int:
     sql = text("""
@@ -40,6 +44,7 @@ def get_nearest_node(db: Session, lat: float, lng: float) -> int:
         raise ValueError("En yakın road node bulunamadı.")
 
     return row.osmid
+
 
 def load_graph_edges(db: Session) -> List[Edge]:
     sql = text("""
@@ -63,7 +68,6 @@ def load_graph_edges(db: Session) -> List[Edge]:
         length_m = float(row.length_m or 0.0)
         risk_score = float(row.risk_score or 0.0)
 
-        # ileri yön
         edges.append(
             Edge(
                 segment_id=row.segment_id,
@@ -74,7 +78,7 @@ def load_graph_edges(db: Session) -> List[Edge]:
             )
         )
 
-        # şimdilik çift yönlü
+        # Şimdilik çift yönlü. Oneway mantığını sonra geri ekleriz.
         edges.append(
             Edge(
                 segment_id=row.segment_id,
@@ -86,6 +90,7 @@ def load_graph_edges(db: Session) -> List[Edge]:
         )
 
     return edges
+
 
 def load_node_coordinates(db: Session) -> Dict[int, Tuple[float, float]]:
     sql = text("""
@@ -105,7 +110,11 @@ def load_node_coordinates(db: Session) -> Dict[int, Tuple[float, float]]:
         if row.lat is not None and row.lng is not None
     }
 
-def load_segment_geometries(db: Session, segment_ids: List[int]) -> Dict[int, List[List[float]]]:
+
+def load_segment_geometries(
+    db: Session,
+    segment_ids: List[int],
+) -> Dict[int, List[List[float]]]:
     if not segment_ids:
         return {}
 
@@ -118,8 +127,7 @@ def load_segment_geometries(db: Session, segment_ids: List[int]) -> Dict[int, Li
     """)
 
     rows = db.execute(sql, {"segment_ids": segment_ids}).fetchall() or []
-
-    result = {}
+    result: Dict[int, List[List[float]]] = {}
 
     for row in rows:
         if not row.geojson:
@@ -140,13 +148,23 @@ def load_segment_geometries(db: Session, segment_ids: List[int]) -> Dict[int, Li
 
     return result
 
+
+# -------------------------------------------------------------------
+# GRAPH
+# -------------------------------------------------------------------
+
 def build_graph(edges: List[Edge]) -> Dict[int, List[Edge]]:
-    graph = defaultdict(list)
+    graph: Dict[int, List[Edge]] = defaultdict(list)
     for edge in edges or []:
         graph[edge.source].append(edge)
     return graph
 
-def heuristic(node_a: int, node_b: int, node_coords: Dict[int, Tuple[float, float]]) -> float:
+
+def heuristic(
+    node_a: int,
+    node_b: int,
+    node_coords: Dict[int, Tuple[float, float]],
+) -> float:
     if node_a not in node_coords or node_b not in node_coords:
         return 0.0
 
@@ -156,6 +174,11 @@ def heuristic(node_a: int, node_b: int, node_coords: Dict[int, Tuple[float, floa
     dx = (lng2 - lng1) * 111320
     dy = (lat2 - lat1) * 110540
     return (dx * dx + dy * dy) ** 0.5
+
+
+# -------------------------------------------------------------------
+# ROUTE RECONSTRUCTION
+# -------------------------------------------------------------------
 
 def reconstruct_route(
     start_node: int,
@@ -208,12 +231,85 @@ def reconstruct_route(
         total_cost=total_cost,
     )
 
+
+# -------------------------------------------------------------------
+# A*
+# -------------------------------------------------------------------
+
+def a_star(
+    graph: Dict[int, List[Edge]],
+    node_coords: Dict[int, Tuple[float, float]],
+    start_node: int,
+    goal_node: int,
+    distance_weight: float = 1.0,
+    risk_weight: float = 1.0,
+    penalized_segments: Optional[Dict[int, float]] = None,
+) -> Optional[RouteResult]:
+    if penalized_segments is None:
+        penalized_segments = {}
+
+    if start_node == goal_node:
+        return RouteResult(
+            path_nodes=[start_node],
+            segment_ids=[],
+            total_length_m=0.0,
+            total_risk=0.0,
+            total_cost=0.0,
+        )
+
+    open_heap = []
+    heapq.heappush(open_heap, (0.0, start_node))
+
+    g_cost = {start_node: 0.0}
+    parent_node: Dict[int, int] = {}
+    parent_edge: Dict[int, Edge] = {}
+    visited = set()
+
+    while open_heap:
+        _, current = heapq.heappop(open_heap)
+
+        if current in visited:
+            continue
+        visited.add(current)
+
+        if current == goal_node:
+            return reconstruct_route(
+                start_node=start_node,
+                goal_node=goal_node,
+                parent_node=parent_node,
+                parent_edge=parent_edge,
+                distance_weight=distance_weight,
+                risk_weight=risk_weight,
+                penalized_segments=penalized_segments,
+            )
+
+        for edge in graph.get(current, []) or []:
+            penalty = penalized_segments.get(edge.segment_id, 0.0)
+            edge_cost = (
+                distance_weight * edge.length_m
+                + risk_weight * edge.risk_score
+                + penalty
+            )
+            tentative_g = g_cost[current] + edge_cost
+
+            if edge.target not in g_cost or tentative_g < g_cost[edge.target]:
+                g_cost[edge.target] = tentative_g
+                parent_node[edge.target] = current
+                parent_edge[edge.target] = edge
+
+                h = heuristic(edge.target, goal_node, node_coords)
+                f = tentative_g + h
+                heapq.heappush(open_heap, (f, edge.target))
+
+    return None
+
+
 def a_star_with_bans(
     graph: Dict[int, List[Edge]],
     node_coords: Dict[int, Tuple[float, float]],
     start_node: int,
     goal_node: int,
-    banned_edges: set[tuple[int, int]],
+    banned_edges: set[Tuple[int, int]],
     banned_nodes: set[int],
     distance_weight: float = 1.0,
     risk_weight: float = 1.0,
@@ -256,7 +352,6 @@ def a_star_with_bans(
         for edge in graph.get(current, []) or []:
             if (edge.source, edge.target) in banned_edges:
                 continue
-
             if edge.target in banned_nodes:
                 continue
 
@@ -274,7 +369,15 @@ def a_star_with_bans(
 
     return None
 
-def merge_route_geometry(segment_ids: List[int], segment_geoms: Dict[int, List[List[float]]]) -> List[List[float]]:
+
+# -------------------------------------------------------------------
+# GEOMETRY + HELPERS
+# -------------------------------------------------------------------
+
+def merge_route_geometry(
+    segment_ids: List[int],
+    segment_geoms: Dict[int, List[List[float]]],
+) -> List[List[float]]:
     if not segment_ids:
         return []
 
@@ -292,6 +395,7 @@ def merge_route_geometry(segment_ids: List[int], segment_geoms: Dict[int, List[L
 
     return full_geometry
 
+
 def route_overlap_ratio(route_a: RouteResult, route_b: RouteResult) -> float:
     a = set(route_a.segment_ids or [])
     b = set(route_b.segment_ids or [])
@@ -306,7 +410,12 @@ def route_overlap_ratio(route_a: RouteResult, route_b: RouteResult) -> float:
 
     return common / base
 
-def build_route_dict(label: str, route: RouteResult, segment_geoms: dict) -> dict:
+
+def build_route_dict(
+    label: str,
+    route: RouteResult,
+    segment_geoms: Dict[int, List[List[float]]],
+) -> dict:
     return {
         "route_label": label,
         "path_nodes": route.path_nodes or [],
@@ -318,56 +427,12 @@ def build_route_dict(label: str, route: RouteResult, segment_geoms: dict) -> dic
     }
 
 
-def find_profile_routes(
-    graph,
-    node_coords,
-    start_node: int,
-    goal_node: int,
-) -> List[tuple[str, RouteResult]]:
-    configs = [
-        ("Shortest", 1.0, 0.0),
-        ("Balanced", 1.0, 1.5),
-        ("Safest", 1.0, 4.0),
-    ]
-
-    routes: List[tuple[str, RouteResult]] = []
-
-    for label, distance_weight, risk_weight in configs:
-        route = a_star(
-            graph=graph,
-            node_coords=node_coords,
-            start_node=start_node,
-            goal_node=goal_node,
-            distance_weight=distance_weight,
-            risk_weight=risk_weight,
-            penalized_segments={},
-        )
-
-        print(f"{label} ROUTE = {route}")
-
-        if route is not None:
-            routes.append((label, route))
-
-    return routes
-def edge_cost_for_route(edge: Edge, distance_weight: float, risk_weight: float) -> float:
-    return distance_weight * edge.length_m + risk_weight * edge.risk_score
-
-def extract_root_route(full_route: RouteResult, spur_index: int) -> RouteResult:
-    return RouteResult(
-        path_nodes=full_route.path_nodes[:spur_index + 1],
-        segment_ids=full_route.segment_ids[:spur_index],
-        total_length_m=0.0,
-        total_risk=0.0,
-        total_cost=0.0,
-    )
-
-
 def compute_partial_cost(
     graph: Dict[int, List[Edge]],
     path_nodes: List[int],
     distance_weight: float,
     risk_weight: float,
-) -> tuple[float, float, float, List[int]]:
+) -> Tuple[float, float, float, List[int]]:
     total_length = 0.0
     total_risk = 0.0
     total_cost = 0.0
@@ -393,6 +458,7 @@ def compute_partial_cost(
 
     return total_length, total_risk, total_cost, segment_ids
 
+
 def combine_routes(
     root_nodes: List[int],
     spur_route: RouteResult,
@@ -407,19 +473,58 @@ def combine_routes(
     length_1, risk_1, cost_1, segs_1 = compute_partial_cost(
         graph, root_nodes, distance_weight, risk_weight
     )
-    length_2 = spur_route.total_length_m or 0.0
-    risk_2 = spur_route.total_risk or 0.0
-    cost_2 = spur_route.total_cost or 0.0
 
     combined_seg_ids = segs_1 + (spur_route.segment_ids or [])
 
     return RouteResult(
         path_nodes=combined_nodes,
         segment_ids=combined_seg_ids,
-        total_length_m=length_1 + length_2,
-        total_risk=risk_1 + risk_2,
-        total_cost=cost_1 + cost_2,
+        total_length_m=length_1 + (spur_route.total_length_m or 0.0),
+        total_risk=risk_1 + (spur_route.total_risk or 0.0),
+        total_cost=cost_1 + (spur_route.total_cost or 0.0),
     )
+
+
+# -------------------------------------------------------------------
+# PROFILE ROUTES
+# -------------------------------------------------------------------
+
+def find_profile_routes(
+    graph: Dict[int, List[Edge]],
+    node_coords: Dict[int, Tuple[float, float]],
+    start_node: int,
+    goal_node: int,
+) -> List[Tuple[str, RouteResult]]:
+    configs = [
+        ("Shortest", 1.0, 0.0),
+        ("Balanced", 1.0, 1.5),
+        ("Safest", 1.0, 4.0),
+    ]
+
+    routes: List[Tuple[str, RouteResult]] = []
+
+    for label, distance_weight, risk_weight in configs:
+        route = a_star(
+            graph=graph,
+            node_coords=node_coords,
+            start_node=start_node,
+            goal_node=goal_node,
+            distance_weight=distance_weight,
+            risk_weight=risk_weight,
+            penalized_segments={},
+        )
+
+        print(f"{label} ROUTE = {route}")
+
+        if route is not None:
+            routes.append((label, route))
+
+    return routes
+
+
+# -------------------------------------------------------------------
+# K-SHORTEST (A* TABANLI)
+# -------------------------------------------------------------------
 
 def find_k_shortest_routes(
     graph: Dict[int, List[Edge]],
@@ -444,11 +549,11 @@ def find_k_shortest_routes(
     if first_route is None:
         return []
 
-    A: List[RouteResult] = [first_route]
-    B: List[RouteResult] = []
+    accepted: List[RouteResult] = [first_route]
+    candidates: List[RouteResult] = []
 
-    for kth in range(1, k):
-        previous_route = A[-1]
+    for _ in range(1, k):
+        previous_route = accepted[-1]
 
         for spur_index in range(len(previous_route.path_nodes) - 1):
             spur_node = previous_route.path_nodes[spur_index]
@@ -457,7 +562,7 @@ def find_k_shortest_routes(
             banned_edges = set()
             banned_nodes = set(root_path_nodes[:-1])
 
-            for route in A:
+            for route in accepted:
                 if route.path_nodes[:spur_index + 1] == root_path_nodes:
                     u = route.path_nodes[spur_index]
                     v = route.path_nodes[spur_index + 1]
@@ -485,24 +590,32 @@ def find_k_shortest_routes(
                 risk_weight=risk_weight,
             )
 
-            is_duplicate = any(r.path_nodes == total_route.path_nodes for r in A + B)
+            is_duplicate = any(r.path_nodes == total_route.path_nodes for r in accepted + candidates)
             if is_duplicate:
                 continue
 
-            too_similar = any(route_overlap_ratio(total_route, existing) > max_overlap for existing in A)
+            too_similar = any(
+                route_overlap_ratio(total_route, existing) > max_overlap
+                for existing in accepted
+            )
             if too_similar:
                 continue
 
-            B.append(total_route)
+            candidates.append(total_route)
 
-        if not B:
+        if not candidates:
             break
 
-        B.sort(key=lambda r: r.total_cost)
-        best_candidate = B.pop(0)
-        A.append(best_candidate)
+        candidates.sort(key=lambda r: r.total_cost)
+        best_candidate = candidates.pop(0)
+        accepted.append(best_candidate)
 
-    return A
+    return accepted
+
+
+# -------------------------------------------------------------------
+# MAIN ENTRY
+# -------------------------------------------------------------------
 
 def find_routes_bundle(
     db: Session,
@@ -565,69 +678,3 @@ def find_routes_bundle(
         "profile_routes": profile_results,
         "alternative_routes": alt_results,
     }
-
-def find_named_routes(
-    db: Session,
-    start_lat: float,
-    start_lng: float,
-    end_lat: float,
-    end_lng: float,
-) -> List[dict]:
-    start_node = get_nearest_node(db, start_lat, start_lng)
-    goal_node = get_nearest_node(db, end_lat, end_lng)
-
-    print(f"START NODE = {start_node}")
-    print(f"GOAL NODE = {goal_node}")
-
-    edges = load_graph_edges(db)
-    graph = build_graph(edges)
-    node_coords = load_node_coordinates(db)
-
-    configs = [
-        ("Shortest", 1.0, 0.0),
-        ("Balanced", 1.0, 1.5),
-        ("Safest", 1.0, 4.0),
-    ]
-
-    routes: List[tuple[str, RouteResult]] = []
-
-    for label, distance_weight, risk_weight in configs:
-        route = a_star(
-            graph=graph,
-            node_coords=node_coords,
-            start_node=start_node,
-            goal_node=goal_node,
-            distance_weight=distance_weight,
-            risk_weight=risk_weight,
-            penalized_segments={},
-        )
-
-        print(f"{label} ROUTE = {route}")
-
-        if route is not None:
-            routes.append((label, route))
-
-    if not routes:
-        return []
-
-    all_segment_ids = list({
-        seg_id
-        for _, route in routes
-        for seg_id in (route.segment_ids or [])
-    })
-
-    segment_geoms = load_segment_geometries(db, all_segment_ids)
-
-    results = []
-    for label, route in routes:
-        results.append({
-            "route_label": label,
-            "path_nodes": route.path_nodes or [],
-            "segment_ids": route.segment_ids or [],
-            "total_length_m": round(route.total_length_m or 0.0, 2),
-            "total_risk": round(route.total_risk or 0.0, 4),
-            "total_cost": round(route.total_cost or 0.0, 4),
-            "geometry": merge_route_geometry(route.segment_ids or [], segment_geoms),
-        })
-
-    return results
