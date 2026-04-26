@@ -16,10 +16,6 @@ class RouteRequest(BaseModel):
     start_lng: float
     end_lat: float
     end_lng: float
-    distance_weight: float = 1.0
-    risk_weight: float = 2.0
-    penalty_factor: float = 500.0
-
 
 class RouteOption(BaseModel):
     route_label: str
@@ -31,7 +27,16 @@ class RouteOption(BaseModel):
     geometry: List[List[float]]
 
 
-class RouteBundleResponse(BaseModel):
-    profile_routes: List[RouteOption]
-    alternative_routes: List[RouteOption]
+class RouteOut(BaseModel):
+    route_id: int
+    total_length_m: float
+    segments: List[int]
+    geometry: List[List[float]]
+
+
+class RouteResponse(BaseModel):
+    message: str
+    start_node: int | None
+    end_node: int | None
+    routes: List[RouteOut]
 
