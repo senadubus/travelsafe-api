@@ -16,6 +16,7 @@ class RouteRequest(BaseModel):
     start_lng: float
     end_lat: float
     end_lng: float
+    mode: str = "car"
 
 class RouteOption(BaseModel):
     route_label: str

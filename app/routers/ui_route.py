@@ -1,5 +1,4 @@
 import json
-
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -18,7 +17,9 @@ def calculate_ui_route(
     data: RouteRequest,
     db: Session = Depends(get_db)
 ):
-    nearest_node_sql = text("""
+    mode_column = "allowed_walk" if data.mode == "walk" else "allowed_car"
+
+    nearest_node_sql = text(f"""
         WITH nearest_segment AS (
             SELECT
                 source_node,
@@ -28,6 +29,7 @@ def calculate_ui_route(
             WHERE source_node IS NOT NULL
               AND target_node IS NOT NULL
               AND geometry IS NOT NULL
+              AND {mode_column} = TRUE
             ORDER BY geometry <-> ST_SetSRID(
                 ST_MakePoint(:lng, :lat),
                 4326
@@ -76,6 +78,8 @@ def calculate_ui_route(
         }
     ).scalar()
 
+    print("MODE:", data.mode)
+    print("MODE COLUMN:", mode_column)
     print("START NODE:", start_node)
     print("END NODE:", end_node)
 
@@ -98,13 +102,13 @@ def calculate_ui_route(
             "route_id": 2,
             "label": "En Güvenli Rota",
             "color": "#2E7D32",
-            "risk_weight": 50
+            "risk_weight": 80
         },
         {
             "route_id": 3,
             "label": "Dengeli Rota",
             "color": "#F57C00",
-            "risk_weight": 5
+            "risk_weight": 15
         },
     ]
 
@@ -117,7 +121,7 @@ def calculate_ui_route(
         risk_weight = profile["risk_weight"]
 
         rows = db.execute(
-            text("""
+            text(f"""
                 WITH segment_risk AS (
                     SELECT
                         rsgm.road_segment_id,
@@ -137,11 +141,11 @@ def calculate_ui_route(
                             rs.target_node AS target,
                             (
                                 rs.length_m
-                                + """ + str(risk_weight) + """ * rs.length_m * (COALESCE(sr.avg_risk, 0) / 100.0)
+                                + {risk_weight} * rs.length_m * (COALESCE(sr.avg_risk, 0) / 100.0)
                             )::double precision AS cost,
                             (
                                 rs.length_m
-                                + """ + str(risk_weight) + """ * rs.length_m * (COALESCE(sr.avg_risk, 0) / 100.0)
+                                + {risk_weight} * rs.length_m * (COALESCE(sr.avg_risk, 0) / 100.0)
                             )::double precision AS reverse_cost
                         FROM road_segments rs
                         LEFT JOIN (
@@ -157,6 +161,7 @@ def calculate_ui_route(
                         WHERE rs.source_node IS NOT NULL
                           AND rs.target_node IS NOT NULL
                           AND rs.length_m IS NOT NULL
+                          AND rs.{mode_column} = TRUE
                         ',
                         :start_node,
                         :end_node,
@@ -221,8 +226,10 @@ def calculate_ui_route(
         route = {
             "route_id": route_id,
             "route_label": label,
+            "label": label,
             "color": color,
             "total_length_m": 0.0,
+            "total_length": 0.0,
             "total_risk": 0.0,
             "risk_percent": 0,
             "total_cost": 0.0,
@@ -246,6 +253,7 @@ def calculate_ui_route(
 
             route["segments"].append(int(edge))
             route["total_length_m"] += length_m
+            route["total_length"] = route["total_length_m"]
             route["total_cost"] += total_cost
 
             risk_sum += cell_risk
@@ -282,14 +290,14 @@ def calculate_ui_route(
 
         if route["segments"]:
             avg_risk = risk_sum / risk_count if risk_count > 0 else 0.0
-            risk_percent = round(avg_risk)
+            risk_percent = min(100, round(avg_risk))
 
-            route["total_risk"] = avg_risk
+            route["total_risk"] = risk_percent
             route["risk_percent"] = risk_percent
 
             if risk_percent < 35:
                 route["risk_level"] = "Düşük"
-            elif risk_percent >= 35 and risk_percent < 70:
+            elif risk_percent < 70:
                 route["risk_level"] = "Orta"
             else:
                 route["risk_level"] = "Yüksek"
@@ -304,10 +312,10 @@ def calculate_ui_route(
         )
 
     print("ROUTES COUNT:", len(routes))
-    print("RETURN ROUTES:", routes)
 
     return {
         "message": "Rotalar başarıyla hesaplandı.",
+        "mode": data.mode,
         "start_node": int(start_node),
         "end_node": int(end_node),
         "routes": routes,

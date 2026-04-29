@@ -28,13 +28,13 @@ def zoom_blur(z: int) -> int | None:
     if z == 10:
         return 6
     if z == 11:
-        return 6   # artırdık
+        return 6   
     if z == 12:
         return 5
     if z == 13:
-        return 4
+        return 7
     if z == 14:
-        return 3
+        return 7
     return None
 
 
@@ -85,31 +85,36 @@ def heat_tile(
         return empty_png()
 
     sql = text("""
-        WITH tile AS (
-            SELECT ST_TileEnvelope(:z, :x, :y) AS geom_3857
-        ),
-        crimes_in_tile AS (
-            SELECT
-                ST_Transform(c.geom::geometry, 3857) AS geom_3857
-            FROM crime c, tile t
-            WHERE c."Date" >= NOW() - (:days || ' days')::interval
-            AND ST_Intersects(ST_Transform(c.geom::geometry, 3857), t.geom_3857)
-            AND (
-                :crime_type IS NULL
-                OR UPPER(c."Primary Type") = UPPER(:crime_type)
-            )
-        ),
-        gridded AS (
-            SELECT
-                FLOOR(ST_X(geom_3857) / :cell_m) * :cell_m AS gx,
-                FLOOR(ST_Y(geom_3857) / :cell_m) * :cell_m AS gy,
-                COUNT(*) AS cnt
-            FROM crimes_in_tile
-            GROUP BY 1, 2
-        )
-        SELECT gx, gy, cnt
-        FROM gridded
-        """)
+    WITH tile AS (
+        SELECT ST_TileEnvelope(:z, :x, :y) AS geom_3857
+    ),
+    max_date AS (
+        SELECT MAX("Date") AS latest_date
+        FROM crime
+    ),
+    crimes_in_tile AS (
+        SELECT
+            ST_Transform(c.geom::geometry, 3857) AS geom_3857
+        FROM crime c, tile t, max_date m
+        WHERE c."Date" >= m.latest_date - (:days || ' days')::interval
+          AND c."Date" <= m.latest_date
+          AND ST_Intersects(ST_Transform(c.geom::geometry, 3857), t.geom_3857)
+          AND (
+              :crime_type IS NULL
+              OR UPPER(c."Primary Type") = UPPER(:crime_type)
+          )
+    ),
+    gridded AS (
+        SELECT
+            FLOOR(ST_X(geom_3857) / :cell_m) * :cell_m AS gx,
+            FLOOR(ST_Y(geom_3857) / :cell_m) * :cell_m AS gy,
+            COUNT(*) AS cnt
+        FROM crimes_in_tile
+        GROUP BY 1, 2
+    )
+    SELECT gx, gy, cnt
+    FROM gridded
+""")
 
     rows = db.execute(sql, {
         "z": z,
@@ -176,6 +181,16 @@ def heat_tile(
             base_color = (255, 60, 0, 130)      # red   # yumuşak kırmızı
 
         r0, g0, b0, a0 = base_color
+
+
+        if days <= 30:
+            visibility_boost = 2.2
+        elif days <= 90:
+            visibility_boost = 1.8
+        elif days <= 180:
+            visibility_boost = 1.5
+        else:
+            visibility_boost = 1.0
         a = min(255, int(a0 * zoom_alpha_multiplier(z)))
         color = (r0, g0, b0, a)
 
