@@ -102,13 +102,13 @@ def calculate_ui_route(
             "route_id": 2,
             "label": "En Güvenli Rota",
             "color": "#2E7D32",
-            "risk_weight": 80
+            "risk_weight": 50
         },
         {
             "route_id": 3,
             "label": "Dengeli Rota",
             "color": "#F57C00",
-            "risk_weight": 15
+            "risk_weight": 5
         },
     ]
 
